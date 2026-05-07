@@ -5,7 +5,7 @@
 
 import { motion, AnimatePresence } from 'motion/react';
 import { GameMode, LeaderboardEntry, UserProfile } from '../types.ts';
-import { Play, Calendar, Zap, Trophy, MousePointer2, ChevronRight, ChevronLeft, BarChart3, History, Target, Flame, X, Info } from 'lucide-react';
+import { Play, Calendar, Zap, Trophy, MousePointer2, ChevronRight, ChevronLeft, BarChart3, History, Target, Flame, X, Info, Infinity, Layers } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { getTopScores } from '../services/gameService.ts';
 import { soundManager } from '../lib/sounds.ts';
@@ -72,7 +72,8 @@ export default function MainMenu({ onSelectMode, profile }: MainMenuProps) {
       id: GameMode.LEVEL,
       title: 'Level Mode',
       description: 'Handcrafted puzzles with progressive difficulty.',
-      icon: <Play className="w-8 h-8" />,
+      icon: <Layers className="w-8 h-8" />,
+      titleIcon: <Layers size={20} className="text-emerald-500/50" />,
       color: 'from-emerald-500 to-teal-600',
       tag: 'Progressive'
     },
@@ -81,6 +82,7 @@ export default function MainMenu({ onSelectMode, profile }: MainMenuProps) {
       title: 'Daily Challenge',
       description: 'One unique puzzle every day. Can you stay consistent?',
       icon: <Calendar className="w-8 h-8" />,
+      titleIcon: <Calendar size={20} className="text-blue-500/50" />,
       color: 'from-blue-500 to-indigo-600',
       tag: 'Timed'
     },
@@ -88,7 +90,8 @@ export default function MainMenu({ onSelectMode, profile }: MainMenuProps) {
       id: GameMode.ENDLESS,
       title: 'Endless Loop',
       description: 'How many rooms can you escape before making a mistake?',
-      icon: <Zap className="w-8 h-8" />,
+      icon: <Infinity className="w-8 h-8" />,
+      titleIcon: <Infinity size={20} className="text-amber-500/50" />,
       color: 'from-amber-500 to-orange-600',
       tag: 'High Score'
     }
@@ -190,7 +193,10 @@ export default function MainMenu({ onSelectMode, profile }: MainMenuProps) {
           </div>
           
           <span className="text-[10px] font-bold tracking-[0.2em] uppercase text-slate-500 mb-2">{mode.tag}</span>
-          <h2 className="text-2xl font-bold mb-3">{mode.title}</h2>
+          <h2 className="text-2xl font-bold mb-3 flex items-center gap-2">
+            {(mode as any).titleIcon}
+            {mode.title}
+          </h2>
           <p className="text-slate-400 text-sm leading-relaxed mb-4">
             {mode.description}
           </p>

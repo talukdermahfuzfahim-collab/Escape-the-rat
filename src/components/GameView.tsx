@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GameMode, RoomConfig, GameSettings } from '../types.ts';
-import { ChevronLeft, RotateCcw, AlertTriangle, ShieldCheck, Timer, Pause, Play, Lightbulb } from 'lucide-react';
+import { ChevronLeft, RotateCcw, AlertTriangle, ShieldCheck, Timer, Pause, Play, Lightbulb, X } from 'lucide-react';
 import { updateLevelProgress, updateEndlessHighScore, updateDailyCompletion, saveGameSession, clearGameSession } from '../services/gameService.ts';
 import { auth } from '../lib/firebase.ts';
 import { soundManager } from '../lib/sounds.ts';
@@ -35,6 +35,22 @@ export default function GameView({
   const [status, setStatus] = useState<'playing' | 'success' | 'failed' | 'resetting'>('playing');
   const [isPaused, setIsPaused] = useState(false);
   const [selectedDoor, setSelectedDoor] = useState<number | null>(null);
+  const [focusedDoor, setFocusedDoor] = useState<number>(0);
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
+  const [isLoadingRoom, setIsLoadingRoom] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return !localStorage.getItem('tutorial_seen');
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const checkTouch = () => {
+      setIsTouchDevice(('ontouchstart' in window) || (navigator.maxTouchPoints > 0));
+    };
+    checkTouch();
+  }, []);
   const [timeLeft, setTimeLeft] = useState(initialTimeLeft !== undefined ? initialTimeLeft : (mode === GameMode.ENDLESS ? 10 : 0));
 
   // Level Generator
@@ -51,7 +67,9 @@ export default function GameView({
       return x - Math.floor(x);
     };
 
-    const doorCount = Math.min(6, 2 + Math.floor(currentLevel / 5));
+    const scalingFactor = mode === GameMode.ENDLESS ? 4 : 5;
+    const maxDoors = mode === GameMode.ENDLESS ? 9 : 6;
+    const doorCount = Math.min(maxDoors, 2 + Math.floor(currentLevel / scalingFactor));
     const correctDoor = Math.floor(pseudoRandom() * doorCount);
     const doorNum = correctDoor + 1;
     
@@ -101,7 +119,9 @@ export default function GameView({
     // Only reset time if it's a new level and we're NOT resuming (initialTimeLeft check)
     // Actually, always reset time on level up in endless mode
     if (mode === GameMode.ENDLESS && status === 'playing' && initialTimeLeft === undefined) {
-      setTimeLeft(10);
+      const baseTime = 11;
+      const reduction = Math.floor(level / 4);
+      setTimeLeft(Math.max(2, baseTime - reduction));
     }
   }, [level, generateRoom, mode, status]);
 
@@ -133,14 +153,42 @@ export default function GameView({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 'p' && status === 'playing') {
+      if (showTutorial) return;
+
+      const key = e.key.toLowerCase();
+      
+      if (key === 'p' && status === 'playing') {
         setIsPaused((prev) => !prev);
         soundManager.play('click');
+        return;
+      }
+
+      if (isPaused || status !== 'playing') return;
+
+      const doorCount = room?.doors || 0;
+      const cols = doorCount > 4 ? 3 : 4;
+
+      if (key === 'a' || e.key === 'ArrowLeft') {
+        setFocusedDoor(f => Math.max(0, f - 1));
+      } else if (key === 'd' || e.key === 'ArrowRight') {
+        setFocusedDoor(f => Math.min(doorCount - 1, f + 1));
+      } else if (key === 'w' || e.key === 'ArrowUp') {
+        setFocusedDoor(f => Math.max(0, f - cols));
+      } else if (key === 's' || e.key === 'ArrowDown') {
+        setFocusedDoor(f => Math.min(doorCount - 1, f + cols));
+      } else if (e.key === ' ' || e.key === 'Enter') {
+        handleDoorClick(focusedDoor);
+      } else if (['1', '2', '3', '4', '5', '6'].includes(e.key)) {
+        const idx = parseInt(e.key) - 1;
+        if (idx < doorCount) {
+          setFocusedDoor(idx);
+          handleDoorClick(idx);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [status]);
+  }, [status, isPaused, room, focusedDoor, showTutorial]);
 
   // Timer logic for endless mode
   useEffect(() => {
@@ -168,8 +216,9 @@ export default function GameView({
   };
 
   const handleDoorClick = async (index: number) => {
-    if (status !== 'playing' || isPaused) return;
+    if (status !== 'playing' || isPaused || showTutorial) return;
     
+    setFocusedDoor(index);
     setSelectedDoor(index);
     if (index === room?.correctDoor) {
       setStatus('success');
@@ -178,21 +227,27 @@ export default function GameView({
       const points = mode === GameMode.ENDLESS ? timeLeft * 10 : 100;
       
       setTimeout(async () => {
-        setLevel(nextLevel);
-        setScore((s) => s + points);
-        setStatus('playing');
-        setSelectedDoor(null);
+        setIsLoadingRoom(true);
         
-        // Save progress if in Level mode
-        if (mode === GameMode.LEVEL && auth.currentUser) {
-          await updateLevelProgress(auth.currentUser.uid, nextLevel, auth.currentUser.displayName || 'Anonymous');
-        }
+        // Brief artificial delay for "generation"
+        setTimeout(async () => {
+          setLevel(nextLevel);
+          setScore((s) => s + points);
+          setStatus('playing');
+          setIsLoadingRoom(false);
+          setSelectedDoor(null);
+          
+          // Save progress if in Level mode
+          if (mode === GameMode.LEVEL && auth.currentUser) {
+            await updateLevelProgress(auth.currentUser.uid, nextLevel, auth.currentUser.displayName || 'Anonymous');
+          }
 
-        // Mark as completed if in Daily mode
-        if (mode === GameMode.DAILY && auth.currentUser) {
-          await updateDailyCompletion(auth.currentUser.uid);
-        }
-      }, 800);
+          // Mark as completed if in Daily mode
+          if (mode === GameMode.DAILY && auth.currentUser) {
+            await updateDailyCompletion(auth.currentUser.uid);
+          }
+        }, 400);
+      }, 600);
     } else {
       setStatus('failed');
       soundManager.play('fail');
@@ -212,6 +267,91 @@ export default function GameView({
     setSelectedDoor(null);
     setRoom(generateRoom(1));
   };
+
+  // Rat Mascot Animation Variants
+  const ratVariants = {
+    playing: (custom: { col: number, cols: number }) => ({
+      opacity: 1,
+      scale: 1,
+      x: custom.col * 80 - (custom.cols === 3 ? 80 : 120),
+      y: -40,
+      rotate: custom.col > custom.cols / 2 ? 5 : -5,
+      transition: {
+        type: 'spring',
+        damping: 15,
+        stiffness: 120,
+        staggerChildren: 0.05
+      }
+    }),
+    success: {
+      opacity: 1,
+      scale: 1,
+      y: [100, -140, 100],
+      rotate: [0, 720],
+      scaleX: [1, 0.8, 1.2, 1],
+      scaleY: [1, 1.4, 0.8, 1],
+      transition: {
+        y: { duration: 0.6, ease: "backOut" },
+        rotate: { duration: 0.8, ease: "easeInOut" },
+        scaleX: { duration: 0.4 },
+        scaleY: { duration: 0.4 },
+        staggerChildren: 0.1
+      }
+    },
+    failed: {
+      opacity: 1,
+      scale: 1,
+      y: [100, 60, 100],
+      rotate: [0, -20, 25, -25, 20, 0],
+      scaleX: [1, 1.3, 0.9, 1],
+      scaleY: [1, 0.7, 1.1, 1],
+      transition: {
+        y: { duration: 0.5, ease: "circOut" },
+        rotate: { duration: 0.5 },
+        scaleX: { duration: 0.3 },
+        scaleY: { duration: 0.3 },
+        staggerChildren: 0.05
+      }
+    }
+  };
+
+  const ratInnerVariants = {
+    playing: { rotate: 0, scale: 1 },
+    success: { 
+      scale: [1, 1.4, 1],
+      transition: { duration: 0.5, ease: "backOut" } 
+    },
+    failed: { 
+      rotate: [0, 180, 360, 0], 
+      scale: [1, 0.7, 1.2, 1],
+      transition: { duration: 0.8 } 
+    }
+  };
+
+  const glowVariants = {
+    playing: { 
+      scale: [1, 1.4, 1],
+      opacity: [0.1, 0.3, 0.1],
+      backgroundColor: "rgb(255, 255, 255)",
+      transition: { repeat: Infinity, duration: 2 } 
+    },
+    success: { 
+      scale: [1, 2.5, 1],
+      opacity: [0.5, 0.8, 0.4],
+      backgroundColor: "rgb(52, 211, 153)",
+      transition: { duration: 0.5 }
+    },
+    failed: { 
+      scale: [1, 2, 1],
+      opacity: [0.5, 0.2, 0.5],
+      backgroundColor: "rgb(248, 113, 113)",
+      transition: { duration: 0.5 }
+    }
+  };
+
+  const cols = room?.doors && room.doors > 4 ? 3 : 4;
+  const col = focusedDoor % cols;
+  const row = Math.floor(focusedDoor / cols);
 
   return (
     <div className="w-full h-full flex flex-col items-center">
@@ -269,6 +409,112 @@ export default function GameView({
         className="relative w-full max-w-4xl aspect-[4/3] md:aspect-[16/9] bg-slate-900/50 rounded-[40px] border border-white/5 overflow-hidden flex flex-col items-center justify-center p-8 lg:p-12"
       >
         
+        {/* Tutorial Overlay */}
+        <AnimatePresence>
+          {showTutorial && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-[100] bg-slate-950/40 backdrop-blur-sm flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                className="bg-slate-900 border border-white/10 rounded-[32px] p-6 shadow-2xl max-w-sm w-full relative overflow-hidden"
+              >
+                <button 
+                  onClick={() => {
+                    soundManager.play('click');
+                    setShowTutorial(false);
+                    localStorage.setItem('tutorial_seen', 'true');
+                  }}
+                  className="absolute top-4 right-4 p-2 hover:bg-white/5 rounded-full text-slate-500 hover:text-white transition-colors"
+                >
+                  <X size={20} />
+                </button>
+
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center">
+                    <span className="text-2xl animate-bounce">🐀</span>
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-black italic">CONTROL GUIDE</h2>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Initial Training</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3 mb-6">
+                  {isTouchDevice ? (
+                    <div className="p-3 bg-white/5 rounded-xl border border-white/5 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <p className="text-xs text-slate-300">Tap doors to explore</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="p-3 bg-white/5 rounded-xl border border-white/5 flex items-center justify-between">
+                        <p className="text-xs text-slate-300">Move Selection</p>
+                        <div className="flex gap-1">
+                          <kbd className="px-1.5 py-0.5 bg-slate-800 border border-white/20 rounded text-[9px] font-bold">W</kbd>
+                          <kbd className="px-1.5 py-0.5 bg-slate-800 border border-white/20 rounded text-[9px] font-bold">A</kbd>
+                          <kbd className="px-1.5 py-0.5 bg-slate-800 border border-white/20 rounded text-[9px] font-bold">S</kbd>
+                          <kbd className="px-1.5 py-0.5 bg-slate-800 border border-white/20 rounded text-[9px] font-bold">D</kbd>
+                        </div>
+                      </div>
+                      <div className="p-3 bg-white/5 rounded-xl border border-white/5 flex items-center justify-between">
+                        <p className="text-xs text-slate-300">Open Door</p>
+                        <kbd className="px-3 py-0.5 bg-slate-800 border border-white/20 rounded text-[9px] font-bold uppercase">Space</kbd>
+                      </div>
+                    </>
+                  )}
+                  <div className="p-3 bg-white/5 rounded-xl border border-white/5 flex items-center justify-between">
+                    <p className="text-xs text-slate-300">Pause Loop</p>
+                    <kbd className="px-2 py-0.5 bg-slate-800 border border-white/20 rounded text-[9px] font-bold">P</kbd>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => {
+                    soundManager.play('click');
+                    setShowTutorial(false);
+                    localStorage.setItem('tutorial_seen', 'true');
+                  }}
+                  className="w-full py-4 bg-emerald-500 text-emerald-950 font-black rounded-2xl shadow-xl shadow-emerald-500/20 hover:bg-emerald-400 transition-colors uppercase tracking-widest"
+                >
+                  Understood
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {isLoadingRoom && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-[80] bg-slate-900/40 backdrop-blur-sm flex flex-col items-center justify-center pointer-events-none"
+            >
+              <div className="flex flex-col items-center gap-4">
+                <div className="relative">
+                  <motion.div 
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    className="w-12 h-12 border-2 border-emerald-500/20 border-t-emerald-500 rounded-full"
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+                  </div>
+                </div>
+                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-500 animate-pulse">
+                  Generating Room...
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Environment Decorations */}
         <div className="absolute inset-0 z-0 pointer-events-none opacity-20">
           <div className="absolute top-0 left-1/4 w-1 h-full bg-white/5" />
@@ -310,9 +556,11 @@ export default function GameView({
         </AnimatePresence>
 
         {/* Doors Grid */}
-        <div className={`z-10 grid gap-4 lg:gap-8 w-full max-w-3xl ${
-          room?.doors && room.doors > 4 ? 'grid-cols-3 sm:grid-cols-3' : 'grid-cols-2 sm:grid-cols-4'
-        } ${isPaused ? 'opacity-20 pointer-events-none grayscale' : ''}`}>
+        <div className={`z-10 grid gap-3 sm:gap-4 lg:gap-8 w-full max-w-3xl ${
+          room?.doors && room.doors > 4 
+            ? 'grid-cols-3 sm:grid-cols-3' 
+            : (room?.doors && room.doors > 2 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2 sm:grid-cols-2')
+        } ${status !== 'playing' || isPaused || isLoadingRoom ? 'opacity-30 pointer-events-none grayscale-[0.5]' : ''}`}>
           {Array.from({ length: room?.doors || 0 }).map((_, i) => (
             <motion.button
               key={i}
@@ -322,11 +570,12 @@ export default function GameView({
               whileHover={settings.animations ? { scale: 1.05, y: -5 } : {}}
               whileTap={settings.animations ? { scale: 0.95 } : {}}
               onClick={() => handleDoorClick(i)}
+              onMouseEnter={() => !showTutorial && setFocusedDoor(i)}
               disabled={status !== 'playing'}
               className={`group relative aspect-[2/3] rounded-2xl transition-all ${
                 selectedDoor === i 
                   ? (i === room?.correctDoor ? 'bg-emerald-500 shadow-[0_0_40px_rgba(16,185,129,0.6)]' : 'bg-red-500 shadow-[0_0_40_px_rgba(239,68,68,0.4)]') 
-                  : 'bg-slate-800 hover:bg-slate-700 border border-white/5 hover:border-emerald-500/30'
+                  : (focusedDoor === i && !isPaused ? 'bg-slate-700 ring-2 ring-emerald-500/50' : 'bg-slate-800 border border-white/5 hover:bg-slate-700 hover:border-emerald-500/30')
               }`}
             >
               {/* Correct Selection Effect */}
@@ -378,73 +627,67 @@ export default function GameView({
         </div>
 
         {/* The Rat (Mascot) */}
-        <motion.div 
-          animate={{ 
-            x: selectedDoor !== null ? (selectedDoor % 4) * 80 - 120 : 0, 
-            y: status === 'success' ? [100, -140, 100] : (status === 'failed' ? [100, 60, 100] : (selectedDoor !== null ? -40 : 100)),
-            rotate: status === 'success' ? [0, 720] : (status === 'failed' ? [0, -20, 20, -20, 0] : (selectedDoor !== null ? (selectedDoor % 4 > 1 ? 5 : -5) : 0)),
-            scaleX: status === 'success' ? [1, 0.8, 1.2, 1] : (status === 'failed' ? [1, 1.3, 0.9, 1] : 1),
-            scaleY: status === 'success' ? [1, 1.4, 0.8, 1] : (status === 'failed' ? [1, 0.7, 1.1, 1] : 1),
-          }}
-          transition={settings.animations ? { 
-            type: 'spring', 
-            damping: 15,
-            stiffness: 120,
-            y: { duration: 0.5, ease: "backOut" },
-            rotate: { duration: 0.6 },
-            scaleX: { duration: 0.3 },
-            scaleY: { duration: 0.3 }
-          } : { duration: 0 }}
-          className="absolute bottom-12 z-20 pointer-events-auto cursor-help"
-        >
-          {/* Reaction Bubble */}
-          <AnimatePresence mode="wait">
-            {(selectedDoor !== null || status !== 'playing') && (
-              <motion.div
-                key={status}
-                initial={{ opacity: 0, scale: 0, y: 10 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0 }}
-                className="absolute -top-12 left-1/2 -translate-x-1/2 bg-white text-slate-900 px-2 py-1 rounded-full text-sm font-black shadow-lg"
-              >
-                {status === 'success' ? '🎉' : status === 'failed' ? '😱' : '?!'}
-                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white rotate-45" />
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <motion.div 
-            whileHover={settings.animations ? { 
-              rotate: [0, -7, 7, -5, 5, 0],
-              x: [0, -2, 2, -1, 1, 0],
-              y: [0, -1, 1, -1, 0],
-              scale: [1, 1.1, 1.05, 1.1, 1],
-              transition: { 
-                duration: 0.3, 
-                repeat: Infinity,
-                repeatDelay: 0.05
-              }
-            } : {}}
-            className="w-16 h-16 bg-slate-700/80 backdrop-blur-sm rounded-full flex items-center justify-center text-3xl shadow-[0_20px_50px_rgba(0,0,0,0.4)] border border-white/20 relative overflow-visible"
-          >
-            <motion.span
-              animate={status === 'failed' ? { rotate: [0, 180, 0], scale: [1, 0.8, 1] } : { rotate: 0, scale: 1 }}
-              transition={{ duration: 0.5 }}
-            >
-              🐀
-            </motion.span>
-            
-            {/* Ambient Glow */}
+        <AnimatePresence>
+          {!isLoadingRoom && (
             <motion.div 
-              animate={{ 
-                scale: [1, 1.5, 1],
-                opacity: status === 'playing' ? [0.1, 0.3, 0.1] : 0.5 
-              }}
-              transition={{ repeat: Infinity, duration: 2 }}
-              className={`absolute inset-0 rounded-full blur-xl ${status === 'success' ? 'bg-emerald-400' : status === 'failed' ? 'bg-red-400' : 'bg-white'}`}
-            />
+              variants={ratVariants}
+              custom={{ col, cols }}
+              initial={{ opacity: 0, scale: 0.5 }}
+              animate={status}
+              exit={{ opacity: 0, scale: 0.5, transition: { duration: 0.2 } }}
+              className="absolute bottom-12 z-20 pointer-events-auto cursor-help"
+            >
+            {/* Reaction Bubble */}
+            <AnimatePresence mode="wait">
+              {(selectedDoor !== null || status !== 'playing') && (
+                <motion.div
+                  key={status}
+                  initial={{ opacity: 0, scale: 0, y: 10 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0 }}
+                  className="absolute -top-12 left-1/2 -translate-x-1/2 bg-white text-slate-900 px-2 py-1 rounded-full text-sm font-black shadow-lg"
+                >
+                  {status === 'success' ? '🎉' : status === 'failed' ? '😱' : '?!'}
+                  <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white rotate-45" />
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <motion.div 
+              whileHover={settings.animations && !isTouchDevice ? { 
+                rotate: [0, -12, 12, -8, 8, -4, 4, 0],
+                x: [0, -3, 3, -2, 2, -1, 1, 0],
+                y: [0, -2, 2, -1, 1, 0],
+                scale: [1, 1.15, 1.08, 1.12, 1.05, 1],
+                transition: { 
+                  duration: 0.25, 
+                  repeat: Infinity,
+                  repeatDelay: 0.1,
+                  ease: "easeInOut"
+                }
+              } : {}}
+              whileTap={settings.animations ? { 
+                scale: 0.9, 
+                rotate: 0,
+                y: 5
+              } : {}}
+              className="w-16 h-16 bg-slate-700/80 backdrop-blur-sm rounded-full flex items-center justify-center text-3xl shadow-[0_20px_50px_rgba(0,0,0,0.4)] border border-white/20 relative overflow-visible"
+            >
+              <motion.span
+                variants={ratInnerVariants}
+              >
+                🐀
+              </motion.span>
+              
+              {/* Ambient Glow */}
+              <motion.div 
+                variants={glowVariants}
+                className="absolute inset-0 rounded-full blur-xl"
+              />
+            </motion.div>
           </motion.div>
-        </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Fail Overlay */}
         <AnimatePresence>
@@ -556,17 +799,34 @@ export default function GameView({
       </motion.div>
 
       {/* Clues Footer */}
-      <div className="mt-8 flex flex-wrap justify-center gap-4">
-        {[
-          { label: 'Deaths', value: '4' },
-          { label: 'Longest Run', value: 'Level 24' },
-          { label: 'World Peak', value: 'Level 82' }
-        ].map((stat, i) => (
-          <div key={i} className="px-4 py-2 rounded-xl bg-white/5 border border-white/5 text-center min-w-[100px]">
-            <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest leading-none mb-1">{stat.label}</p>
-            <p className="text-sm font-bold">{stat.value}</p>
-          </div>
-        ))}
+      <div className="mt-8 flex flex-col items-center gap-6">
+        {/* Quick Controls Hint */}
+        <div className="flex items-center gap-4 px-6 py-2 rounded-full bg-white/5 border border-white/5 text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em]">
+          {isTouchDevice ? (
+            <span className="flex items-center gap-2">Tap any door to select</span>
+          ) : (
+            <>
+              <span className="flex items-center gap-1.5"><kbd className="bg-slate-800 px-1.5 py-0.5 rounded border border-white/10 text-white">WASD</kbd> Move</span>
+              <span className="w-1 h-1 rounded-full bg-white/10" />
+              <span className="flex items-center gap-1.5"><kbd className="bg-slate-800 px-1.5 py-0.5 rounded border border-white/10 text-white">SPACE</kbd> Select</span>
+              <span className="w-1 h-1 rounded-full bg-white/10" />
+              <span className="flex items-center gap-1.5"><kbd className="bg-slate-800 px-1.5 py-0.5 rounded border border-white/10 text-white">P</kbd> Pause</span>
+            </>
+          )}
+        </div>
+
+        <div className="flex flex-wrap justify-center gap-4">
+          {[
+            { label: 'Deaths', value: '4' },
+            { label: 'Longest Run', value: 'Level 24' },
+            { label: 'World Peak', value: 'Level 82' }
+          ].map((stat, i) => (
+            <div key={i} className="px-4 py-2 rounded-xl bg-white/5 border border-white/5 text-center min-w-[100px]">
+              <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest leading-none mb-1">{stat.label}</p>
+              <p className="text-sm font-bold">{stat.value}</p>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
