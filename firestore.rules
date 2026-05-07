@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Helpers ---
+    function isValidUserProfile(data) {
+      return data.uid is string && data.uid.size() <= 128
+        && data.levelProgress is number && data.levelProgress >= 0
+        && (!data.keys().contains('endlessHighScore') || data.endlessHighScore is number)
+        && (!data.keys().contains('displayName') || (data.displayName is string && data.displayName.size() <= 100))
+        && (!data.keys().contains('photoURL') || (data.photoURL is string && data.photoURL.size() <= 1000))
+        && (!data.keys().contains('dailyCompleted') || data.dailyCompleted is list)
+        && (!data.keys().contains('settings') || (
+             data.settings is map 
+             && (data.settings.get('volume', 0.5) is number || data.settings.get('volume', 0.5) is float)
+             && data.settings.get('animations', true) is bool
+             && data.settings.get('musicEnabled', true) is bool
+           ))
+        && (!data.keys().contains('currentSession') || (
+             data.currentSession == null || (
+               data.currentSession is map
+               && data.currentSession.mode is string
+               && data.currentSession.level is number
+               && data.currentSession.score is number
+               && data.currentSession.timeLeft is number
+               && data.currentSession.updatedAt is string
+             )
+           ))
+        && (request.method == 'create' ? data.createdAt == request.time : true)
+        && data.updatedAt == request.time;
+    }
+
+    function isValidLeaderboardEntry(data) {
+      return data.uid is string && data.uid.size() <= 128
+        && data.score is number && data.score >= 0
+        && (!data.keys().contains('displayName') || (data.displayName is string && data.displayName.size() <= 100))
+        && data.updatedAt == request.time;
+    }
+
+    // --- Rules ---
+
+    match /users/{userId} {
+      allow get: if true; // Allow public view of profiles for leaderboards
+      allow list: if false; 
+      
+      allow create: if isOwner(userId) && isValidUserProfile(incoming()) 
+        && incoming().uid == request.auth.uid
+        && incoming().levelProgress == 1;
+      
+      allow update: if isOwner(userId) && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && (
+          // Action: Progress Level
+          (incoming().diff(existing()).affectedKeys().hasOnly(['levelProgress', 'updatedAt']) && incoming().levelProgress >= existing().levelProgress) ||
+          // Action: Update High Score
+          (incoming().diff(existing()).affectedKeys().hasOnly(['endlessHighScore', 'updatedAt']) && (incoming().endlessHighScore >= existing().endlessHighScore || incoming().endlessHighScore == 0)) ||
+          // Action: General Update
+          (incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt'])) ||
+          // Action: Update Settings
+          (incoming().diff(existing()).affectedKeys().hasOnly(['settings', 'updatedAt'])) ||
+          // Action: Daily Complete
+          (incoming().diff(existing()).affectedKeys().hasOnly(['dailyCompleted', 'updatedAt'])) ||
+          // Action: Save/Clear Session
+          (incoming().diff(existing()).affectedKeys().hasOnly(['currentSession', 'updatedAt'])) ||
+          // Action: Reset Progress
+          (incoming().diff(existing()).affectedKeys().hasOnly(['levelProgress', 'endlessHighScore', 'dailyCompleted', 'currentSession', 'updatedAt']))
+        );
+    }
+
+    match /leaderboards/endless/scores/{scoreId} {
+      allow read: if true;
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidLeaderboardEntry(incoming()) 
+        && incoming().uid == request.auth.uid
+        && isValidId(scoreId);
+      
+      allow update: if isSignedIn() && incoming().uid == request.auth.uid
+        && isValidLeaderboardEntry(incoming())
+        && incoming().score > existing().score
+        && incoming().diff(existing()).affectedKeys().hasOnly(['score', 'displayName', 'updatedAt']);
+    }
+
+    match /leaderboards/levels/scores/{scoreId} {
+      allow read: if true;
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidLeaderboardEntry(incoming()) 
+        && incoming().uid == request.auth.uid
+        && isValidId(scoreId);
+      
+      allow update: if isSignedIn() && incoming().uid == request.auth.uid
+        && isValidLeaderboardEntry(incoming())
+        && incoming().score > existing().score
+        && incoming().diff(existing()).affectedKeys().hasOnly(['score', 'displayName', 'updatedAt']);
+    }
+  }
+}

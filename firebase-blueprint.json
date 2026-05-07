@@ -1,0 +1,58 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores user progress and profile data",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "levelProgress": { "type": "number" },
+        "endlessHighScore": { "type": "number" },
+        "dailyCompleted": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "levelProgress"]
+    },
+    "LeaderboardEntry": {
+      "title": "Leaderboard Entry",
+      "description": "Stores high scores for the global leaderboard",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "score": { "type": "number" },
+        "level": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "score"]
+    },
+    "DailyPuzzle": {
+      "title": "Daily Puzzle",
+      "description": "Stores puzzle configuration for a specific day",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "config": { "type": "object" },
+        "correctDoor": { "type": "number" }
+      },
+      "required": ["date", "config", "correctDoor"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile and progress"
+    },
+    "leaderboards/endless/scores/{scoreId}": {
+      "schema": "LeaderboardEntry",
+      "description": "Global endless mode scores"
+    },
+    "leaderboards/levels/scores/{scoreId}": {
+      "schema": "LeaderboardEntry",
+      "description": "Global level progress rankings"
+    }
+  }
+}
