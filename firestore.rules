@@ -29,15 +29,15 @@ service cloud.firestore {
 
     // --- Validation Helpers ---
     function isValidUserProfile(data) {
-      return data.uid is string && data.uid.size() <= 128
-        && data.levelProgress is number && data.levelProgress >= 0
-        && (!data.keys().contains('endlessHighScore') || data.endlessHighScore is number)
-        && (!data.keys().contains('displayName') || (data.displayName is string && data.displayName.size() <= 100))
-        && (!data.keys().contains('photoURL') || (data.photoURL is string && data.photoURL.size() <= 1000))
+      return (!data.keys().contains('uid') || (data.uid is string && data.uid.size() <= 128))
+        && (!data.keys().contains('levelProgress') || (data.levelProgress is number && data.levelProgress >= 0))
+        && (!data.keys().contains('endlessHighScore') || (data.endlessHighScore is number && data.endlessHighScore >= 0))
+        && (!data.keys().contains('displayName') || (data.displayName == null || (data.displayName is string && data.displayName.size() <= 200)))
+        && (!data.keys().contains('photoURL') || (data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 2000)))
         && (!data.keys().contains('dailyCompleted') || data.dailyCompleted is list)
         && (!data.keys().contains('settings') || (
              data.settings is map 
-             && (data.settings.get('volume', 0.5) is number || data.settings.get('volume', 0.5) is float)
+             && (data.settings.get('volume', 0.5) is number)
              && data.settings.get('animations', true) is bool
              && data.settings.get('musicEnabled', true) is bool
            ))
@@ -45,52 +45,38 @@ service cloud.firestore {
              data.currentSession == null || (
                data.currentSession is map
                && data.currentSession.mode is string
-               && data.currentSession.level is number
-               && data.currentSession.score is number
-               && data.currentSession.timeLeft is number
-               && data.currentSession.updatedAt is string
+               && (data.currentSession.level is number)
+               && (data.currentSession.score is number)
+               && (data.currentSession.timeLeft is number)
+               && data.currentSession.get('updatedAt', '') is string
              )
-           ))
-        && (request.method == 'create' ? data.createdAt == request.time : true)
-        && data.updatedAt == request.time;
+           ));
     }
 
     function isValidLeaderboardEntry(data) {
       return data.uid is string && data.uid.size() <= 128
         && data.score is number && data.score >= 0
-        && (!data.keys().contains('displayName') || (data.displayName is string && data.displayName.size() <= 100))
+        && (!data.keys().contains('displayName') || (data.displayName == null || (data.displayName is string && data.displayName.size() <= 200)))
         && data.updatedAt == request.time;
     }
 
     // --- Rules ---
 
     match /users/{userId} {
-      allow get: if true; // Allow public view of profiles for leaderboards
+      allow get: if true; 
       allow list: if false; 
       
-      allow create: if isOwner(userId) && isValidUserProfile(incoming()) 
-        && incoming().uid == request.auth.uid
-        && incoming().levelProgress == 1;
+      allow create: if isOwner(userId) 
+        && isValidUserProfile(incoming())
+        && (incoming().get('uid', userId) == userId)
+        && (incoming().createdAt == request.time)
+        && (incoming().updatedAt == request.time);
       
-      allow update: if isOwner(userId) && isValidUserProfile(incoming())
-        && incoming().uid == existing().uid
-        && incoming().createdAt == existing().createdAt
-        && (
-          // Action: Progress Level
-          (incoming().diff(existing()).affectedKeys().hasOnly(['levelProgress', 'updatedAt']) && incoming().levelProgress >= existing().levelProgress) ||
-          // Action: Update High Score
-          (incoming().diff(existing()).affectedKeys().hasOnly(['endlessHighScore', 'updatedAt']) && (incoming().endlessHighScore >= existing().endlessHighScore || incoming().endlessHighScore == 0)) ||
-          // Action: General Update
-          (incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt'])) ||
-          // Action: Update Settings
-          (incoming().diff(existing()).affectedKeys().hasOnly(['settings', 'updatedAt'])) ||
-          // Action: Daily Complete
-          (incoming().diff(existing()).affectedKeys().hasOnly(['dailyCompleted', 'updatedAt'])) ||
-          // Action: Save/Clear Session
-          (incoming().diff(existing()).affectedKeys().hasOnly(['currentSession', 'updatedAt'])) ||
-          // Action: Reset Progress
-          (incoming().diff(existing()).affectedKeys().hasOnly(['levelProgress', 'endlessHighScore', 'dailyCompleted', 'currentSession', 'updatedAt']))
-        );
+      allow update: if isOwner(userId)
+        && isValidUserProfile(incoming())
+        && (incoming().get('uid', userId) == userId)
+        && (incoming().createdAt == existing().createdAt)
+        && (incoming().updatedAt == request.time);
     }
 
     match /leaderboards/endless/scores/{scoreId} {

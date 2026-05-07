@@ -36,6 +36,7 @@ export default function GameView({
   const [isPaused, setIsPaused] = useState(false);
   const [selectedDoor, setSelectedDoor] = useState<number | null>(null);
   const [focusedDoor, setFocusedDoor] = useState<number>(0);
+  const [isPoisoned, setIsPoisoned] = useState(false);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [isLoadingRoom, setIsLoadingRoom] = useState(false);
   const [showTutorial, setShowTutorial] = useState(() => {
@@ -67,37 +68,75 @@ export default function GameView({
       return x - Math.floor(x);
     };
 
-    const scalingFactor = mode === GameMode.ENDLESS ? 4 : 5;
-    const maxDoors = mode === GameMode.ENDLESS ? 9 : 6;
+    const scalingFactor = mode === GameMode.ENDLESS ? 3 : 5;
+    const maxDoors = mode === GameMode.ENDLESS ? 15 : 10;
     const doorCount = Math.min(maxDoors, 2 + Math.floor(currentLevel / scalingFactor));
     const correctDoor = Math.floor(pseudoRandom() * doorCount);
     const doorNum = correctDoor + 1;
     
-    // Add logic/clues based on level
-    let hint = '';
-    if (currentLevel > 3) {
-      const possibleHints: string[] = [];
-      
-      // Basic Hints (Level 4+)
-      if (doorNum % 2 === 0) possibleHints.push('The path is even');
-      else possibleHints.push('The path is odd');
+    // Determine Trap Type
+    let trapType: RoomConfig['trapType'] = 'none';
+    if (currentLevel > 2) {
+      const trapRoll = pseudoRandom();
+      if (currentLevel > 15) {
+        if (trapRoll < 0.3) trapType = 'poison';
+        else if (trapRoll < 0.6) trapType = 'penalty';
+        else trapType = 'reset';
+      } else if (currentLevel > 8) {
+        if (trapRoll < 0.4) trapType = 'penalty';
+        else trapType = 'reset';
+      } else {
+        trapType = 'reset';
+      }
+    }
 
+    // Generate contextually relevant hints
+    let hint = '';
+    if (currentLevel > 1) {
+      const possibleHints: string[] = [];
+      const isEven = doorNum % 2 === 0;
+      
+      // Basic Directional Hints
       if (correctDoor < doorCount / 2) possibleHints.push('Look to the left');
       else possibleHints.push('Look to the right');
 
-      // Intermediate Hints (Level 10+)
-      if (currentLevel >= 10) {
-        if (doorNum === 2 || doorNum === 3 || doorNum === 5) possibleHints.push('Follow the prime numbers');
-        if (doorNum % 3 === 0) possibleHints.push('It is a multiple of 3');
-        if (correctDoor > 0 && correctDoor < doorCount - 1) possibleHints.push('The edges are dangerous');
+      // Parity Hints
+      possibleHints.push(isEven ? 'The path is even' : 'The path is odd');
+
+      // Trap-Specific Warning Hints (Contextual)
+      if (trapType === 'poison') {
+        possibleHints.push('The air feels heavy...');
+        possibleHints.push('Breath slowly and choose');
+      } else if (trapType === 'penalty') {
+        possibleHints.push('A hefty price awaits errors');
+        possibleHints.push('High stakes in this hall');
+      } else if (trapType === 'reset') {
+        possibleHints.push('A long fall back to start');
       }
 
-      // Advanced Hints (Level 20+)
-      if (currentLevel >= 20) {
+      // Intermediate Hints (Level 12+)
+      if (currentLevel >= 12) {
+        if (doorNum === 2 || doorNum === 3 || doorNum === 5 || doorNum === 7 || doorNum === 11 || doorNum === 13) {
+          possibleHints.push('Follow the prime numbers');
+        }
+        if (doorNum % 3 === 0) possibleHints.push('It is a multiple of 3');
+        if (correctDoor > 0 && correctDoor < doorCount - 1) possibleHints.push('The edges are dangerous');
+        const middle = Math.floor(doorCount / 2);
+        if (correctDoor === middle) possibleHints.push('Trust the center');
+      }
+
+      // Advanced Hints (Level 25+)
+      if (currentLevel >= 25) {
         if (correctDoor === 0) possibleHints.push('The first shall be first');
         if (correctDoor === doorCount - 1) possibleHints.push('The end is the beginning');
-        if (doorNum > 3) possibleHints.push('The answer is high');
-        else possibleHints.push('The answer is low');
+        const isPerfectSquare = (n: number) => Math.sqrt(n) % 1 === 0;
+        if (isPerfectSquare(doorNum)) possibleHints.push('Perfect geometry leads the way');
+        if (doorNum > 5) possibleHints.push('Ascend higher');
+        else possibleHints.push('Lower foundations');
+        
+        // Obscure Hints (High level flavor)
+        if (isEven && doorNum > doorCount / 2) possibleHints.push('High and balanced');
+        if (!isEven && doorNum <= doorCount / 2) possibleHints.push('Low and uneven');
       }
 
       // Select a hint based on level difficulty (prefer later hints in the list if available at high levels)
@@ -110,7 +149,7 @@ export default function GameView({
       doors: doorCount,
       correctDoor,
       hint,
-      trapType: currentLevel > 2 ? 'reset' : 'none'
+      trapType
     };
   }, [mode]);
 
@@ -237,6 +276,9 @@ export default function GameView({
           setIsLoadingRoom(false);
           setSelectedDoor(null);
           
+          // Clear poison if was active
+          if (isPoisoned) setIsPoisoned(false);
+
           // Save progress if in Level mode
           if (mode === GameMode.LEVEL && auth.currentUser) {
             await updateLevelProgress(auth.currentUser.uid, nextLevel, auth.currentUser.displayName || 'Anonymous');
@@ -249,8 +291,22 @@ export default function GameView({
         }, 400);
       }, 600);
     } else {
-      setStatus('failed');
       soundManager.play('fail');
+      
+      // Handle Trap
+      if (room?.trapType === 'poison') {
+        setIsPoisoned(true);
+        setStatus('failed');
+      } else if (room?.trapType === 'penalty') {
+        setScore(s => Math.max(0, s - (mode === GameMode.ENDLESS ? 50 : 200)));
+        if (mode === GameMode.ENDLESS) {
+          setTimeLeft(t => Math.max(0, t - 5));
+        }
+        setStatus('failed');
+      } else {
+        setStatus('failed');
+      }
+
       await handleGameEnd();
     }
   };
@@ -265,6 +321,7 @@ export default function GameView({
     setScore(0);
     setStatus('playing');
     setSelectedDoor(null);
+    setIsPoisoned(false);
     setRoom(generateRoom(1));
   };
 
@@ -349,7 +406,7 @@ export default function GameView({
     }
   };
 
-  const cols = room?.doors && room.doors > 4 ? 3 : 4;
+  const cols = room?.doors ? (room.doors > 6 ? 5 : (room.doors > 4 ? 3 : 4)) : 4;
   const col = focusedDoor % cols;
   const row = Math.floor(focusedDoor / cols);
 
@@ -557,9 +614,11 @@ export default function GameView({
 
         {/* Doors Grid */}
         <div className={`z-10 grid gap-3 sm:gap-4 lg:gap-8 w-full max-w-3xl ${
-          room?.doors && room.doors > 4 
-            ? 'grid-cols-3 sm:grid-cols-3' 
-            : (room?.doors && room.doors > 2 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2 sm:grid-cols-2')
+          room?.doors && room.doors > 6
+            ? 'grid-cols-5'
+            : (room?.doors && room.doors > 4 
+                ? 'grid-cols-3 sm:grid-cols-3' 
+                : (room?.doors && room.doors > 2 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2 sm:grid-cols-2'))
         } ${status !== 'playing' || isPaused || isLoadingRoom ? 'opacity-30 pointer-events-none grayscale-[0.5]' : ''}`}>
           {Array.from({ length: room?.doors || 0 }).map((_, i) => (
             <motion.button
@@ -700,8 +759,16 @@ export default function GameView({
               <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mb-6">
                 <AlertTriangle size={40} className="text-red-500" />
               </div>
-              <h2 className="text-4xl font-black mb-2 italic">LOOP RESET!</h2>
-              <p className="text-slate-400 mb-8 max-w-sm">The trap was triggered. A wrong door led you back to the start of the loop.</p>
+              <h2 className="text-4xl font-black mb-2 italic">
+                {room?.trapType === 'poison' ? 'CHOKING GAS!' : room?.trapType === 'penalty' ? 'HEAVY TOLL!' : 'LOOP RESET!'}
+              </h2>
+              <p className="text-slate-400 mb-8 max-w-sm">
+                {room?.trapType === 'poison' 
+                  ? 'A toxic trap was triggered. Your vision will be obscured in the next attempt.' 
+                  : room?.trapType === 'penalty' 
+                    ? 'The trap sapped your resources! You have lost considerable score.' 
+                    : 'A wrong door led you back to the start of the loop.'}
+              </p>
               
               <div className="flex gap-4">
                 <button 
@@ -721,8 +788,41 @@ export default function GameView({
           )}
         </AnimatePresence>
 
+        {/* Poison Effect Overlay */}
+        <AnimatePresence>
+          {isPoisoned && !isLoadingRoom && status === 'playing' && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-[70] pointer-events-none"
+            >
+              <div className="absolute inset-0 bg-emerald-950/40 mix-blend-multiply" />
+              <div className="absolute inset-0 shadow-[inset_0_0_150px_rgba(16,185,129,0.5)]" />
+              <motion.div 
+                animate={{ 
+                  scale: [1, 1.1, 1],
+                  opacity: [0.3, 0.6, 0.3]
+                }}
+                transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
+                className="absolute inset-[-10%] bg-[radial-gradient(circle,transparent_40%,rgba(6,78,59,0.8)_80%)]"
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Success Feedback */}
         <AnimatePresence>
+          {level > 20 && status === 'playing' && settings.animations && (
+            <motion.div 
+              animate={{ 
+                opacity: [0, 0.15, 0, 0.1, 0],
+                x: [0, -2, 2, -1, 0]
+              }}
+              transition={{ repeat: Infinity, duration: 8, times: [0, 0.05, 0.1, 0.15, 1] }}
+              className="absolute inset-0 bg-white z-[5] pointer-events-none"
+            />
+          )}
           {status === 'success' && (
             <motion.div 
               initial={{ opacity: 0, scale: 0.5 }}

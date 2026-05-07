@@ -138,14 +138,28 @@ export default function MainMenu({ onSelectMode, profile }: MainMenuProps) {
           animate={{ opacity: 1, y: 0 }}
           className="w-full max-w-4xl flex items-center justify-between mb-8 p-6 rounded-[32px] bg-white/5 border border-white/5 backdrop-blur-sm"
         >
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-500">
-              <Trophy size={24} />
+          <div className="flex flex-wrap items-center gap-6">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+                <Trophy size={24} />
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Your Progress</p>
+                <h3 className="text-xl font-black italic">ROOM {profile.levelProgress}</h3>
+              </div>
             </div>
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Your Progress</p>
-              <h3 className="text-xl font-black italic">ROOM {profile.levelProgress}</h3>
-            </div>
+
+            {streak > 0 && (
+              <div className="flex items-center gap-4 pl-6 border-l border-white/5">
+                <div className="w-12 h-12 rounded-2xl bg-orange-500/10 flex items-center justify-center text-orange-500">
+                  <Flame size={24} className={streak > 0 ? 'animate-pulse' : ''} />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Daily Streak</p>
+                  <h3 className="text-xl font-black italic text-orange-500">{streak} DAYS</h3>
+                </div>
+              </div>
+            )}
           </div>
           
           <button 
@@ -193,9 +207,17 @@ export default function MainMenu({ onSelectMode, profile }: MainMenuProps) {
           </div>
           
           <span className="text-[10px] font-bold tracking-[0.2em] uppercase text-slate-500 mb-2">{mode.tag}</span>
-          <h2 className="text-2xl font-bold mb-3 flex items-center gap-2">
-            {(mode as any).titleIcon}
-            {mode.title}
+          <h2 className="text-2xl font-bold mb-3 flex items-center justify-between w-full">
+            <span className="flex items-center gap-2">
+              {(mode as any).titleIcon}
+              {mode.title}
+            </span>
+            {mode.id === GameMode.DAILY && streak > 0 && (
+              <span className="px-2 py-0.5 bg-orange-500/20 text-orange-500 text-[10px] font-black uppercase tracking-widest rounded-lg border border-orange-500/20 flex items-center gap-1">
+                <Flame size={12} />
+                {streak}
+              </span>
+            )}
           </h2>
           <p className="text-slate-400 text-sm leading-relaxed mb-4">
             {mode.description}

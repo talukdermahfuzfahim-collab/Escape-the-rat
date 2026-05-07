@@ -49,5 +49,5 @@ export interface RoomConfig {
   doors: number;
   correctDoor: number;
   hint?: string;
-  trapType?: 'poison' | 'reset' | 'none';
+  trapType?: 'poison' | 'reset' | 'penalty' | 'none';
 }
